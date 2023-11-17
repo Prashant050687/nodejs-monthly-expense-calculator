@@ -1,0 +1,321 @@
+const express = require('express');
+const router = express.Router();
+const Expense = require('../models/Expense');
+const excelJS = require('exceljs');
+const crypto = require('crypto');
+
+const {
+  findExpensesByDate,
+  findAllExpenses,
+  createExpense,
+  findById,
+  updateExpense,
+  deleteExpense,
+} = require('../dao/expensesDao');
+
+const authenticationRequired = require('../config/authenticationMiddleware');
+
+// Get all expenses
+/**
+ * @swagger
+ * /api/expenses:
+ *   get:
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *      - in: query
+ *        name: fromDate
+ *        required: true
+ *        type: string
+ *        example: 2023-11-15
+ *        description: From date Of expense.
+ *      - in: query
+ *        name: toDate
+ *        required: true
+ *        type: string
+ *        example: 2023-11-25
+ *        description: To date Of expense.
+ *     description: Get all expenses between dates
+ *     responses:
+ *       200:
+ *         description: Returns the requested Expenses
+ */
+router.get('/', authenticationRequired, async (req, res) => {
+  console.log('Invoking find all expenses');
+  try {
+    let expenses;
+    const fromDate = req.query.fromDate;
+    const toDate = req.query.toDate;
+    if (fromDate && toDate) {
+      expenses = await findExpensesByDate(fromDate, toDate);
+    } else {
+      expenses = await findAllExpenses();
+    }
+    res.json({ success: true, data: expenses });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, error: 'Something went wrong' });
+  }
+});
+
+// Get all expenses
+/**
+ * @swagger
+ * /api/expenses/{id}:
+ *   get:
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *      - in: path
+ *        name: id
+ *        required: true
+ *        type: string
+ *        description: Id of expense
+ *     description: Get a particular expense
+ *     responses:
+ *       200:
+ *         description: Returns the requested Expenses
+ */
+router.get('/:id', authenticationRequired, async (req, res) => {
+  console.log('Invoking get by id');
+  try {
+    const savedExpense = await findById(req.params.id);
+
+    res.json({ success: true, data: savedExpense });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, error: 'Something went wrong' });
+  }
+});
+
+// Export all expenses
+/**
+ * @swagger
+ * /api/expenses/export:
+ *   get:
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *      - in: query
+ *        name: fromDate
+ *        required: true
+ *        type: string
+ *        example: 2023-11-15
+ *        description: From date Of expense.
+ *      - in: query
+ *        name: toDate
+ *        required: true
+ *        type: string
+ *        example: 2023-11-25
+ *        description: To date Of expense.
+ *     description: Get all expenses between dates
+ *     responses:
+ *       200:
+ *         description: Returns the requested Expenses in excel format
+ */
+router.get('/export', authenticationRequired, async (req, res) => {
+  console.log('Invoking find all expenses');
+  try {
+    let expenses;
+    const fromDate = req.query.fromDate;
+    const toDate = req.query.toDate;
+    if (fromDate && toDate) {
+      expenses = await findExpensesByDate(fromDate, toDate);
+    } else {
+      expenses = await findAllExpenses();
+    }
+
+    let exportExpenses = [];
+    expenses.forEach((expense) => {
+      exportExpenses.push({
+        date: expense.date,
+        description: expense.description,
+        amount: expense.amount,
+        paidBy: expense.paidBy,
+      });
+    });
+
+    const workbook = new excelJS.Workbook(); // Create a new workbook
+    const worksheet = workbook.addWorksheet('Expenses'); // New Worksheet
+
+    worksheet.columns = [
+      { header: 'Date', key: 'date', width: 5 },
+      { header: 'Description', key: 'description', width: 25 },
+      { header: 'Amount', key: 'amount', width: 25 },
+      { header: 'Paid By', key: 'paidBy', width: 10 },
+    ];
+
+    // Add Array Rows
+    worksheet.addRows(exportExpenses);
+
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename=' + 'expenses.xlsx'
+    );
+
+    await workbook.xlsx.write(res);
+    res.status(200).end();
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, error: 'Something went wrong' });
+  }
+});
+
+// Create an expense
+/**
+ * @swagger
+ * /api/expenses:
+ *   post:
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               expenseId:
+ *                 type: string
+ *                 description: Autogenerated expense Id.
+ *                 example: f2fbce5a-8ee7-49fc-823c-67ec2c28ff47
+ *               description:
+ *                 type: string
+ *                 description: Description.
+ *                 example: Clothes shopping
+ *               paidBy:
+ *                 type: string
+ *                 description: Payee.
+ *                 example: Prashant
+ *               amount:
+ *                 type: Number
+ *                 description: Amount spent.
+ *                 example: 500
+ *               date:
+ *                 type: string
+ *                 format: date
+ *                 description: Date of expenditure
+ *                 example: 2022-09-20
+ *     description: Create an expense
+ *     responses:
+ *       200:
+ *         description: Saved the expense
+ */
+router.post('/', authenticationRequired, async (req, res) => {
+  console.log('saving expense');
+  try {
+    const expenseToBeSaved = new Expense({
+      amount: req.body.amount,
+      description: req.body.description,
+      date: req.body.date,
+      paidBy: req.body.paidBy,
+      reason: req.body.reason,
+      expenseId: crypto.randomUUID(),
+    });
+
+    const savedExpense = await createExpense(expenseToBeSaved);
+
+    res.json({ success: true, data: savedExpense });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, error: 'Something went wrong' });
+  }
+});
+
+// Update an expense
+/**
+ * @swagger
+ * /api/expenses/{id}:
+ *   put:
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *      - in: path
+ *        name: id
+ *        required: true
+ *        type: string
+ *        description: Id of expense
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               description:
+ *                 type: string
+ *                 description: Description.
+ *                 example: Clothes shopping
+ *               paidBy:
+ *                 type: string
+ *                 description: Payee.
+ *                 example: Prashant
+ *               amount:
+ *                 type: Number
+ *                 description: Amount spent.
+ *                 example: 500
+ *               date:
+ *                 type: string
+ *                 format: date
+ *                 description: Date of expenditure
+ *                 example: 2022-09-20
+ *     description: Create an expense
+ *     responses:
+ *       200:
+ *         description: Saved the expense
+ */
+router.put('/:id', authenticationRequired, async (req, res) => {
+  console.log('updating expense');
+  try {
+    const expenseToBeSaved = new Expense({
+      amount: req.body.amount,
+      description: req.body.description,
+      date: req.body.date,
+      paidBy: req.body.paidBy,
+      reason: req.body.reason,
+    });
+    console.log(expenseToBeSaved);
+    const savedExpense = await updateExpense(req.params.id, expenseToBeSaved);
+
+    res.json({ success: true, data: savedExpense });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, error: 'Something went wrong' });
+  }
+});
+
+// Delete an expense
+/**
+ * @swagger
+ * /api/expenses/{id}:
+ *   delete:
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *      - in: path
+ *        name: id
+ *        required: true
+ *        type: string
+ *        description: Id of expense
+ *
+ *     description: Delete an expense
+ *     responses:
+ *       200:
+ *         description: Delete the expense
+ */
+router.delete('/:id', authenticationRequired, async (req, res) => {
+  console.log('Deleting expense');
+  try {
+    await deleteExpense(req.params.id);
+    res.json({ success: true, data: {} });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ success: false, error: 'Something went wrong' });
+  }
+});
+
+module.exports = router;
